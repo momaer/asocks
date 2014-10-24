@@ -197,7 +197,7 @@ void *worker(void *arg)
 
 		if(err)
 		{
-			perror("getaddrinfo error.\n");
+			printf("getaddrinfo error.host:[%s], port:[%s]\n", domainname, a);
 			close_socket(c->fd);
 			close(remotefd);
 			remotefd = 0;
@@ -223,7 +223,10 @@ void *worker(void *arg)
 		free(domainname);
 	}
 
-	redirect_data(c->fd, remotefd);
+	if(remotefd > 0)
+	{
+		redirect_data(c->fd, remotefd);
+	}
 
 	free(c);
 	return 0;

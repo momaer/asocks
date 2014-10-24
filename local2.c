@@ -121,6 +121,20 @@ static void *worker(void *arg)
 	if(buf[0] != 0x05)
 	{
 		printf("only support socks5.\n");
+
+		char response[4] = {0x00, 0x07, 0x00, 0x01};
+		send(clientfd, response, 4, 0);
+
+		shutdown(clientfd, SHUT_RDWR);
+		close(clientfd);
+		return 0;
+	}
+	if(buf[1] > 262-2)
+	{
+		printf("%d\n", buf[1]);
+		char response[4] = {0x00, 0x07, 0x00, 0x01};
+		send(clientfd, response, 4, 0);
+
 		shutdown(clientfd, SHUT_RDWR);
 		close(clientfd);
 		return 0;
