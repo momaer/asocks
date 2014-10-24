@@ -108,14 +108,32 @@ static void *worker(void *arg)
 {
 	int clientfd = *((int *)arg);
 
+	/* 版本协商和认证方法 */
 	char buf[262] = {0};
-	int ret = recv(clientfd, buf, 262, 0);
+	int ret = recv_all(clientfd, buf, 2);
 	if(ret <=0)
 	{
 		shutdown(clientfd, SHUT_RDWR);
 		close(clientfd);
+		return 0;
 	}
 
+	if(buf[0] != 0x05)
+	{
+		printf("only support socks5.\n");
+		shutdown(clientfd, SHUT_RDWR);
+		close(clientfd);
+		return 0;
+	}
+	ret = recv_all(clientfd, buf+2, buf[1]);
+	if(ret <=0)
+	{
+		shutdown(clientfd, SHUT_RDWR);
+		close(clientfd);
+		return 0;
+	}
+
+	/* 使用5协议，不需要认证 */
 	buf[0] = 0x05;
 	buf[1] = 0x00;
 	send(clientfd, buf, 2, 0);
@@ -123,6 +141,7 @@ static void *worker(void *arg)
 	char sendbuf[256] = {0};
 	char sendbufindex = 0;
 
+	/* 请求 */
 	bzero(buf, 262);
 //	recv(clientfd, buf, 4, 0);
 	ret = recv_all(clientfd, buf, 4);
@@ -131,6 +150,7 @@ static void *worker(void *arg)
 		printf("recv first 4 bytes request.%d\n", ret);
 		shutdown(clientfd, SHUT_RDWR);
 		close(clientfd);
+		return 0;
 	}
 
 	/* only accept connect cmd  */
@@ -155,6 +175,7 @@ static void *worker(void *arg)
 		{
 			shutdown(clientfd, SHUT_RDWR);
 			close(clientfd);
+			return 0;
 		}
 
 		memcpy(sendbuf+sendbufindex, remoteip, 4);
@@ -169,6 +190,7 @@ static void *worker(void *arg)
 		{
 			shutdown(clientfd, SHUT_RDWR);
 			close(clientfd);
+			return 0;
 		}
 
 		char *domainame = (char *)malloc(len[0]);
@@ -178,6 +200,7 @@ static void *worker(void *arg)
 		{
 			shutdown(clientfd, SHUT_RDWR);
 			close(clientfd);
+			return 0;
 		}
 
 		memcpy(sendbuf+sendbufindex, len, 1);
@@ -211,12 +234,14 @@ static void *worker(void *arg)
 	{
 		shutdown(clientfd, SHUT_RDWR);
 		close(clientfd);
+		return 0;
 	}
 
 	//printf("remote port:%d\n", ntohs( *((unsigned short int *)dstportbuf) ) );
 	memcpy(sendbuf+sendbufindex, dstportbuf, 2);
 	sendbufindex += 2;
 
+	/* 响应 */
 	char response[4] = {0x05, 0x00, 0x00, 0x01};
 	send(clientfd, response, 4, 0);
 
@@ -231,6 +256,7 @@ static void *worker(void *arg)
 	int remotefd = socket(AF_INET, SOCK_STREAM, 0);
 	int conn = connect(remotefd, result->ai_addr, result->ai_addrlen);
 
+	/* 请求转发给server */
 	if(conn == 0)
 	{
 		char username[10] = {0};
