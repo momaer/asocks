@@ -121,15 +121,7 @@ static void *worker(void *arg)
 	if(buf[0] != 0x05)
 	{
 		printf("only support socks5. recv value:%X %X\n", buf[0], buf[1]);
-		bzero(buf+2, 257);
-		int i= recv(clientfd, buf+2, 200, 0);
-		int j =0;
-		for(; j<i+2;j++)
-		{
-			printf("%x:", buf[j]);
-		}
-		printf("\n");
-//		shutdown(clientfd, SHUT_RDWR);
+		shutdown(clientfd, SHUT_RDWR);
 		close(clientfd);
 		return 0;
 	}
@@ -262,13 +254,6 @@ static void *worker(void *arg)
 		char response[10] = {0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 		send(clientfd, response, 10, 0);
 
-//		char bndaddr[4] = {0};
-//		inet_pton(AF_INET, "0.0.0.0", bndaddr);
-//		send(clientfd, bndaddr, 4, 0);
-//
-//		unsigned short int bndport = htons((short)listen_port);
-//		send(clientfd, &bndport, 2, 0);
-
 		/* 告诉服务器账号和dst信息 */
 		char username[10] = {0};
 		strcpy(username, "gaoshijie");
@@ -365,7 +350,6 @@ int main(int argc, char* argv[])
 	{
 		int *pclientfd = (int *)malloc(sizeof(int*));
 		*pclientfd = accept(listenfd, NULL, NULL);
-//		printf("new connection.\n");
 
 		pthread_t threadid;
 		pthread_attr_t attr;
