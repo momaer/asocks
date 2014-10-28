@@ -109,7 +109,7 @@ static void *worker(void *arg)
 	int clientfd = *((int *)arg);
 
 	/* 版本协商和认证方法 */
-	char buf[262] = {0};
+	char buf[257] = {0};
 	int ret = recv_all(clientfd, buf, 2);
 	if(ret <=0)
 	{
@@ -120,21 +120,22 @@ static void *worker(void *arg)
 
 	if(buf[0] != 0x05)
 	{
-		printf("only support socks5.\n");
-
-		char response[4] = {0x00, 0x07, 0x00, 0x01};
-		send(clientfd, response, 4, 0);
-
-		shutdown(clientfd, SHUT_RDWR);
+		printf("only support socks5. recv value:%X %X\n", buf[0], buf[1]);
+		bzero(buf+2, 257);
+		int i= recv(clientfd, buf+2, 200, 0);
+		int j =0;
+		for(; j<i+2;j++)
+		{
+			printf("%x:", buf[j]);
+		}
+		printf("\n");
+//		shutdown(clientfd, SHUT_RDWR);
 		close(clientfd);
 		return 0;
 	}
-	if(buf[1] > 262-2)
+	if(buf[1] > 255)
 	{
-		printf("%d\n", buf[1]);
-		char response[4] = {0x00, 0x07, 0x00, 0x01};
-		send(clientfd, response, 4, 0);
-
+		printf("nmethods value:%d\n", buf[1]);
 		shutdown(clientfd, SHUT_RDWR);
 		close(clientfd);
 		return 0;
@@ -171,6 +172,8 @@ static void *worker(void *arg)
 	if(buf[1] != 1)
 	{
 		printf("only accept connect cmd. recv cmd:[%d].\n", buf[1]);
+		char response[4] = {0x05, 0x07, 0x00, 0x01};
+		send(clientfd, response, 4, 0);
 		shutdown(clientfd, SHUT_RDWR);
 		close(clientfd);
 		return 0;
@@ -224,18 +227,11 @@ static void *worker(void *arg)
 
 		free(domainame);
 	}
-	/* ip v6 */
-	else if(buf[3] == 4)
-	{
-		printf("remote addr type ip v6 is not supported.\n");
-		shutdown(clientfd, SHUT_RDWR);
-		close(clientfd);
-		return 0;
-	}
 	else
 	{
-		//shutdown and destroy client
-		printf("remote addr type error.\n");
+		printf("dst addr type is not supported.\n");
+		char response[4] = {0x05, 0x08, 0x00, 0x01};
+		send(clientfd, response, 4, 0);
 		shutdown(clientfd, SHUT_RDWR);
 		close(clientfd);
 		return 0;
@@ -255,17 +251,6 @@ static void *worker(void *arg)
 	memcpy(sendbuf+sendbufindex, dstportbuf, 2);
 	sendbufindex += 2;
 
-	/* 响应 */
-	char response[4] = {0x05, 0x00, 0x00, 0x01};
-	send(clientfd, response, 4, 0);
-
-	char bndaddr[4] = {0};
-	inet_pton(AF_INET, "0.0.0.0", bndaddr);
-	send(clientfd, bndaddr, 4, 0);
-
-	unsigned short int bndport = htons((short)listen_port);
-	send(clientfd, &bndport, 2, 0);
-
 	/* connect to server */
 	int remotefd = socket(AF_INET, SOCK_STREAM, 0);
 	int conn = connect(remotefd, result->ai_addr, result->ai_addrlen);
@@ -273,6 +258,18 @@ static void *worker(void *arg)
 	/* 请求转发给server */
 	if(conn == 0)
 	{
+		/* 响应 */
+		char response[10] = {0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+		send(clientfd, response, 10, 0);
+
+//		char bndaddr[4] = {0};
+//		inet_pton(AF_INET, "0.0.0.0", bndaddr);
+//		send(clientfd, bndaddr, 4, 0);
+//
+//		unsigned short int bndport = htons((short)listen_port);
+//		send(clientfd, &bndport, 2, 0);
+
+		/* 告诉服务器账号和dst信息 */
 		char username[10] = {0};
 		strcpy(username, "gaoshijie");
 		char password[9] = {0};
@@ -290,10 +287,17 @@ static void *worker(void *arg)
 		send(remotefd, xorencode(password,plen), plen, 0);
 
 		send(remotefd, xorencode(sendbuf,sendbufindex), sendbufindex, 0);
+
+		redirect_data(clientfd, remotefd);
 	}
 	else
 	{
 		printf("connect to server failed. return value:%d\n", conn);
+
+		/* 响应 */
+		char response[4] = {0x05, 0x01, 0x00, 0x01};
+		send(clientfd, response, 4, 0);
+
 		shutdown(clientfd, SHUT_RDWR);
 		close(clientfd);
 		shutdown(remotefd, SHUT_RDWR);
@@ -301,7 +305,6 @@ static void *worker(void *arg)
 		return 0;
 	}
 
-	redirect_data(clientfd, remotefd);
 	return 0;
 }
 
@@ -360,21 +363,22 @@ int main(int argc, char* argv[])
 
 	while(1)
 	{
-		int clientfd = accept(listenfd, NULL, NULL);
+		int *pclientfd = (int *)malloc(sizeof(int*));
+		*pclientfd = accept(listenfd, NULL, NULL);
 //		printf("new connection.\n");
 
 		pthread_t threadid;
 		pthread_attr_t attr;
 		pthread_attr_init(&attr);
 		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-		int ret = pthread_create(&threadid, &attr, &worker, &clientfd);
+		int ret = pthread_create(&threadid, &attr, &worker, pclientfd);
 		pthread_attr_destroy(&attr);
 
 		/* EAGAIN? */
 		if(ret != 0)
 		{
 			printf("pthread_create return %d.\n", ret);
-			close(clientfd);
+			close(*pclientfd);
 		}
 	}
 
