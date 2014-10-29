@@ -96,19 +96,34 @@ void *worker(void *arg)
 	int len = recv(c->fd, buf, 1, 0);
 	xorencode(buf, 1);
 
+	if( !(buf[0]>0 && buf[0]<=128) )
+	{
+		shutdown(c->fd, SHUT_RDWR);
+		close(c->fd);
+		return 0;
+	}
+
 	char* username = (char *)malloc(buf[0] + 1);
+	bzero(username, buf[0]+1);
 	recv(c->fd, username, buf[0], 0);
 	xorencode(username, buf[0]);
-	*(username+buf[0]) = 0;
 
+	bzero(buf, 1);
 	len = recv(c->fd, buf, 1, 0);
 	xorencode(buf, 1);
+
+	if( !(buf[0]>0 && buf[0]<=128) )
+	{
+		shutdown(c->fd, SHUT_RDWR);
+		close(c->fd);
+		return 0;
+	}
+
 	char* password = (char *)malloc(buf[0] + 1);
+	bzero(password, buf[0]+1);
 	recv(c->fd, password, buf[0], 0);
 	xorencode(password, buf[0]);
-	*(password+buf[0]) = 0;
 
-//	printf("username:[%s], password:[%s]\n", username, password);
 	free(username);
 	free(password);
 	/* todo validate username and password */
@@ -157,7 +172,9 @@ void *worker(void *arg)
 			remotefd = 0;
 		}
 		else
-			printf("connecte to remote success.host:[%s], port:[%d]\n", humanaddr, ntohs(addr.sin_port));
+		{
+			//printf("connecte to remote success.host:[%s], port:[%d]\n", humanaddr, ntohs(addr.sin_port));
+		}
 	}
 	else if(type == 3)
 	{
@@ -170,7 +187,7 @@ void *worker(void *arg)
 		xorencode(domainname, domainnamelen);
 		*(domainname + domainnamelen) = 0;
 
-		char port[3] = {0};
+		char port[2] = {0};
 		recv(c->fd, port, 2, 0);
 		xorencode(port, 2);
 
@@ -183,13 +200,11 @@ void *worker(void *arg)
 		char a[6] = {0};
 		sprintf(a, "%d", shortport);
 
-		//printf("remote domainname:[%s]remote port:[%s]\n", domainname, a);
-
 		struct addrinfo *result;
 
 		struct addrinfo hints;
-		memset(&hints, 0, sizeof(hints));
-//		hints.ai_family = AF_UNSPEC;
+		//memset(&hints, 0, sizeof(hints));
+        bzero(&hints, sizeof(hints));
 		hints.ai_family = AF_INET;
 		hints.ai_socktype = SOCK_STREAM;
 
@@ -215,7 +230,9 @@ void *worker(void *arg)
 				remotefd = 0;
 			}
 			else
+			{
 				printf("connecte to remote success.host:[%s], port:[%s]\n", domainname, a);
+			}
 
 			freeaddrinfo(result);
 		}
