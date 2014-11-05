@@ -5,7 +5,6 @@
  *      Author: gaoshijie
  */
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <netdb.h>
@@ -16,6 +15,7 @@
 #include <string.h>
 #include <signal.h>
 #include <pthread.h>
+#include "json.h"
 
 struct client
 {
@@ -23,6 +23,22 @@ struct client
 	char state;
 	int remotefd;
 };
+
+struct account
+{
+    char id[32+1];
+    char password[32+1];
+    char expire[10+1];
+};
+
+struct server_config
+{
+    char server[15+1];
+    char server_port[5+1];
+    struct account accounts[64];
+};
+
+static struct server_config *config = NULL;
 
 static unsigned char* xorencode(void *data, int len)
 {
@@ -88,6 +104,38 @@ void redirect_data(int fd, int remotefd)
 	}
 }
 
+int check_account(const char *id, const char *password)
+{
+    int i = 0;
+    for(; i<64; i++)
+    {
+        struct account a = config->accounts[i];
+
+        if(a.id[0] != 0x00)
+        {
+            if(strcmp(a.id, id) == 0 && strcmp(a.password, password) == 0)
+            {
+                time_t rawtime;
+                struct tm *timeinfo;
+                char buf[80];
+
+                time(&rawtime);
+                timeinfo = localtime(&rawtime);
+
+                strftime(buf, 80, "%Y-%m-%d", timeinfo);
+
+                if(strcmp(a.expire, buf) > 0)
+                {
+                    return 0;
+                }
+                break;
+            }
+        }
+    }
+
+    return 1;
+}
+
 void *worker(void *arg)
 {
 	struct client *c = (struct client *)arg;
@@ -124,10 +172,25 @@ void *worker(void *arg)
 	recv(c->fd, password, buf[0], 0);
 	xorencode(password, buf[0]);
 
+    //printf("id:%s, password:%s.\n", username, password);
+
+    if(check_account(username, password) != 0)
+    {
+        free(username);
+        free(password);
+
+        shutdown(c->fd, SHUT_RDWR);
+        close(c->fd);
+
+        free(c);
+        c = NULL;
+        return 0;
+    }
+
 	free(username);
 	free(password);
-	/* todo validate username and password */
 
+    bzero(buf, sizeof(buf));
 	len = recv(c->fd, buf, 1, 0);
 	xorencode(buf, 1);
 	char type = buf[0];
@@ -239,6 +302,10 @@ void *worker(void *arg)
 
 		free(domainname);
 	}
+    else
+    {
+        printf("Invalid type:%d\n", type);
+    }
 
 	if(remotefd > 0)
 	{
@@ -246,22 +313,127 @@ void *worker(void *arg)
 	}
 
 	free(c);
+    c = NULL;
 	return 0;
+}
+
+static int parse_config(const char* config_path, struct server_config *config)
+{
+    FILE *f = fopen(config_path, "rb");
+    if(f == NULL)
+    {
+        printf("Invalid config path.\n");
+        return 1;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long pos = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    char *buf = (char *)malloc(pos + 1);
+    if(buf == NULL)
+    {
+        printf("No enough memory.\n");
+        return 1;
+    }
+
+    int nread = fread(buf, pos, 1, f);
+    if(!nread)
+    {
+        printf("Failed to read the config file.\n");
+        fclose(f);
+        return 1;
+    }
+    buf[pos] = 0x00;
+
+    json_settings settings = {0};
+    char error_buf[512];
+    json_value *obj;
+    obj = json_parse_ex(&settings, buf, pos, error_buf);
+    if(obj == NULL)
+    {
+        printf("%s", error_buf);
+        return 1;
+    }
+
+    if(obj->type == json_object)
+    {
+        unsigned int i;
+        for(i = 0; i < obj->u.object.length; i++)
+        {
+            char *name = obj->u.object.values[i].name;
+            json_value *value = obj->u.object.values[i].value;
+
+            if(strcmp(name, "server") == 0)
+            {
+                strncpy(config->server, value->u.string.ptr, value->u.string.length);
+            }
+            else if(strcmp(name, "server_port") == 0)
+            {
+                strncpy(config->server_port, value->u.string.ptr, value->u.string.length);
+            }
+            else if(strcmp(name, "accounts") == 0)
+            {
+                if(value->type == json_array)
+                {
+                    unsigned int j;
+                    for(j = 0; j < value->u.array.length; j++)
+                    {
+                        json_value *item = value->u.array.values[j];
+                        unsigned int fields_length = item->u.object.length;
+                        unsigned int k;
+                        for(k = 0; k < fields_length; k++)
+                        {
+                            char *account_name = item->u.object.values[k].name;
+                            json_value *account_value = item->u.object.values[k].value;
+
+                            if(strcmp(account_name, "id") == 0)
+                            {
+                                strncpy( config->accounts[j].id, account_value->u.string.ptr, account_value->u.string.length );
+                            }
+                            else if(strcmp(account_name, "password") == 0)
+                            {
+                                strncpy( config->accounts[j].password, account_value->u.string.ptr, account_value->u.string.length );
+                            }
+                            else if(strcmp(account_name, "expire") == 0)
+                            {
+                                strncpy( config->accounts[j].expire, account_value->u.string.ptr, account_value->u.string.length );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    else
+    {
+        printf("Invalid config file.\n");
+        return 1;
+    }
+
+    free(buf);
+    json_value_free(obj);
+
+    return 0;
 }
 
 int main(int argc, char* argv[])
 {
-	if(argc < 3)
-	{
-		printf("Usage:%s ip port\n", argv[0]);
-		return 1;
-	}
+	char *config_path = "config.json";
+
+    config = (struct server_config *)malloc(sizeof(struct server_config));
+    bzero(config, sizeof(struct server_config));
+
+    int ret = 0;
+
+    ret = parse_config(config_path, config);
+    if(ret != 0)
+    {
+        return 1;
+    }
 
 	signal(SIGPIPE, SIG_IGN);
 	signal(SIGABRT, SIG_IGN);
-
-	char* ip = argv[1];
-	int port = atoi(argv[2]);
 
 	int listenfd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -271,16 +443,16 @@ int main(int argc, char* argv[])
 	struct sockaddr_in addr;
 	bzero(&addr, sizeof(addr));
 	addr.sin_family = AF_INET;
-	inet_pton(AF_INET, ip, &addr.sin_addr);
-	addr.sin_port = htons(port);
+	inet_pton(AF_INET, config->server, &addr.sin_addr);
+	addr.sin_port = htons( atoi(config->server_port) );
 
-	int ret = bind(listenfd, (struct sockaddr *)&addr, sizeof(addr));
+	ret = bind(listenfd, (struct sockaddr *)&addr, sizeof(addr));
 	assert(ret != -1);
 
 	ret = listen(listenfd, 32);
 	assert(ret == 0);
 
-	printf("listening ... \n");
+	printf("listening on %s:%s ... \n", config->server, config->server_port);
 
 	while(1)
 	{
