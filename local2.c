@@ -66,7 +66,7 @@ static void redirect_data(int fd, int remotefd)
 		FD_SET(fd, &read);
 		FD_SET(remotefd, &read);
 
-		int ret = select(fd+remotefd, &read, NULL, NULL, NULL);
+		int ret = select( (fd > remotefd ? fd : remotefd)+1, &read, NULL, NULL, NULL);
 		if(ret == -1)
 			continue;
 
@@ -132,6 +132,7 @@ static void *worker(void *arg)
 		close(clientfd);
 		return 0;
 	}
+
 	ret = recv_all(clientfd, buf+2, buf[1]);
 	if(ret <=0)
 	{
@@ -150,7 +151,6 @@ static void *worker(void *arg)
 
 	/* 请求 */
 	bzero(buf, 262);
-//	recv(clientfd, buf, 4, 0);
 	ret = recv_all(clientfd, buf, 4);
 	if(ret <= 0)
 	{
@@ -178,7 +178,6 @@ static void *worker(void *arg)
 	if(buf[3] == 1)
 	{
 		char remoteip[4] = {0};
-//		recv(clientfd, remoteip, 4, 0);
 		ret = recv_all(clientfd, remoteip, 4);
 		if(ret <= 0)
 		{
@@ -203,7 +202,6 @@ static void *worker(void *arg)
 		}
 
 		char *domainame = (char *)malloc(len[0]);
-//		recv(clientfd, domainame, len[0], 0);
 		recv_all(clientfd, domainame, len[0]);
 		if(ret <= 0)
 		{
@@ -230,7 +228,6 @@ static void *worker(void *arg)
 	}
 
 	char dstportbuf[2] = {0};
-//	recv(clientfd, dstportbuf, 2, 0);
 	ret = recv_all(clientfd, dstportbuf, 2);
 	if(ret <= 0)
 	{
@@ -255,10 +252,8 @@ static void *worker(void *arg)
 		send(clientfd, response, 10, 0);
 
 		/* 告诉服务器账号和dst信息 */
-		char username[10] = {0};
-		strcpy(username, "gaoshijie");
-		char password[9] = {0};
-		strcpy(password, "password");
+		char username[] = "gaoshijie";
+		char password[] = "password";
 
 		char ulen = strlen(username);
 		char plen = strlen(password);
@@ -319,7 +314,6 @@ int main(int argc, char* argv[])
 	hints.ai_socktype = SOCK_STREAM;
 
 	int err = getaddrinfo(server, p, &hints, &result);
-
 	if(err)
 	{
 		printf("getaddrinfo error.\n");
@@ -350,6 +344,12 @@ int main(int argc, char* argv[])
 	{
 		int *pclientfd = (int *)malloc(sizeof(int*));
 		*pclientfd = accept(listenfd, NULL, NULL);
+        if(*pclientfd == -1)
+        {
+            free(pclientfd);
+            printf("accept failed.\n");
+            continue;
+        }
 
 		pthread_t threadid;
 		pthread_attr_t attr;
@@ -363,6 +363,7 @@ int main(int argc, char* argv[])
 		{
 			printf("pthread_create return %d.\n", ret);
 			close(*pclientfd);
+            free(pclientfd);
 		}
 	}
 

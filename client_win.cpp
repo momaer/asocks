@@ -1,12 +1,18 @@
-// asocks.cpp : 定义控制台应用程序的入口点。
+// asocks_win.cpp : 定义控制台应用程序的入口点。
 //
 
+#define _CRT_SECURE_NO_WARNINGS
+
+#define FD_SETSIZE 2048
+
+#include "stdafx.h"
 #include <WinSock2.h>
 #include <ws2tcpip.h>
 #include <Windows.h>
 #include <assert.h>
 #include <map>
 #include <list>
+#include "json.h"
 #pragma comment (lib, "Ws2_32.lib")
 
 using namespace std;
@@ -57,26 +63,131 @@ static void set_nonblock(SOCKET fd)
 	ioctlsocket(fd, FIONBIO, &i);
 }
 
+static char* strndup(const char *s, int n)
+{
+	char *ret = (char*)malloc(n + 1);
+	strncpy(ret, s, n);
+	ret[n] = 0x00;
+	return ret;
+}
+
 static std::map<SOCKET, client_ctx*> clients;
 static std::map<SOCKET, remote_ctx*> remotes;
 
 int main(int argc, char* argv[])
 {
+	/*
 	if(argc < 4)
 	{
-		printf("Usage:%s local_port server server_port\n", argv[0]);
+		printf("Usage:%s server server_port local_addr local_port\n", argv[0]);
 		return 1;
 	}
-	//char* server = "sg.actself.me";
-	//char* server_port = "10801";
-	//char* local_addr = "0.0.0.0";
-	//char* local_port = "1081";
-
-	char* local_port = argv[1];
-	char* server = argv[2];
-	char* server_port = argv[3];
-	char* local_addr = "0.0.0.0";
 	
+	char* server = argv[1];
+	char* server_port = argv[2];
+	char* local_addr = argv[3];
+	char* local_port = argv[4];
+
+	char* account_id = "gaoshijie";
+	char* password = "password";
+	*/
+	
+	char* server = NULL;
+	char* server_port = NULL;
+	char* local_addr = NULL;
+	char* local_port = NULL;
+	
+	char* account_id = NULL;
+	char* password = NULL;
+	
+
+	char *config_file = "config.json";
+	FILE *f = fopen(config_file, "rb");
+	if(f == NULL)
+	{
+		printf("Invalid config path.\n");
+		return 1;
+	}
+
+	fseek(f, 0, SEEK_END);
+	long pos = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	char *buf = (char*)malloc(pos + 1);
+	if(buf == NULL)
+	{
+		printf("No enough memory.\n");
+		return 1;
+	}
+
+	int nread = fread(buf, pos, 1, f);
+	if(!nread)
+	{
+		printf("Failed to read the config file.\n");
+		fclose(f);
+		return 1;
+	}
+	fclose(f);
+
+	buf[pos] = '\0'; // end of string
+
+	json_settings settings = { 0 };
+    char error_buf[512];
+	json_value *obj;
+    obj = json_parse_ex(&settings, buf, pos, error_buf);
+
+    if (obj == NULL)
+    {
+        printf("%s", error_buf);
+		return 1;
+    }
+
+	if(obj->type == json_object)
+	{
+		unsigned int i;
+		for(i = 0; i < obj->u.object.length; i++)
+		{
+			char *name = obj->u.object.values[i].name;
+			json_value *value = obj->u.object.values[i].value;
+
+			if(strcmp(name, "server") == 0)
+			{
+				if(value->type == json_string)
+				{
+					server = strndup( value->u.string.ptr, value->u.string.length );
+				}
+			}
+			else if(strcmp(name, "server_port") == 0)
+			{
+				server_port = strndup( value->u.string.ptr, value->u.string.length );
+			}
+			else if(strcmp(name, "local_addr") == 0)
+			{
+				local_addr = strndup( value->u.string.ptr, value->u.string.length );
+			}
+			else if(strcmp(name, "local_port") == 0)
+			{
+				local_port = strndup( value->u.string.ptr, value->u.string.length );
+			}
+			else if(strcmp(name, "account_id") == 0)
+			{
+				account_id = strndup( value->u.string.ptr, value->u.string.length );
+				//printf("account_id:%s\n", account_id);
+			}
+			else if(strcmp(name, "password") == 0)
+			{
+				password = strndup( value->u.string.ptr, value->u.string.length );
+			}
+		}
+	}
+	else
+	{
+		printf("Invalid config file.\n");
+		return 1;
+	}
+	free(buf);
+	json_value_free(obj);
+
 	int ret = 0;
 
 	WSADATA wsa;
@@ -137,11 +248,11 @@ int main(int argc, char* argv[])
 	
 	for(; ;)
 	{
-		client_to_remove.clear();
-		remote_to_remove.clear();
-
 		FD_ZERO(&readfds);
 		FD_ZERO(&writefds);
+
+		client_to_remove.clear();
+		remote_to_remove.clear();
 
 		FD_SET(listen_fd, &readfds);
 
@@ -173,11 +284,12 @@ int main(int argc, char* argv[])
 			}
 		}
 
+		//struct timeval timeout = {0, 50 * 1000};
 		ret = select(0, &readfds, &writefds, NULL, NULL);
 		
 		if(ret == 0)
 		{
-			printf("select time out.\n");
+			//printf("select time out.\n");
 			continue;
 		}
 		else if (ret == SOCKET_ERROR)
@@ -194,7 +306,7 @@ int main(int argc, char* argv[])
 
 			set_nonblock(client_fd);
 
-			client_ctx *new_client = (client_ctx *)malloc(sizeof(client_ctx));
+			client_ctx *new_client = (struct client_ctx *)malloc(sizeof(client_ctx));
 			ZeroMemory(new_client, sizeof(client_ctx));
 			new_client->client_fd = client_fd;
 			
@@ -222,6 +334,10 @@ int main(int argc, char* argv[])
 					if(len <= 0)
 					{
 						//printf("recv data from client failed. recv length:%d, state:%d\n", len, c->state);
+						if(client_fd == 0)
+						{
+							printf("client_fd is:%d\n", client_fd);
+						}
 						client_to_remove.push_back(client_fd);
 						continue;
 					}
@@ -335,7 +451,7 @@ int main(int argc, char* argv[])
 						continue;
 					}
 
-					c->remote = (remote_ctx*)malloc(sizeof(remote_ctx));
+					c->remote = (struct remote_ctx*)malloc(sizeof(remote_ctx));
 					ZeroMemory(c->remote, sizeof(remote_ctx));
 					c->remote->client = c;
 
@@ -511,27 +627,30 @@ int main(int argc, char* argv[])
 						r->client->write_length += 10;
 
 						/* 告诉服务器账号和dst信息 */
-						char username[10] = {0};
-						memcpy(username, "gaoshijie", 9);
-						char password[9] = {0};
-						memcpy(password, "password", 8);
-
-						char ulen = strlen(username);
+						char ulen = strlen(account_id);
 						char plen = strlen(password);
 
 						memcpy( (r->write_buf + r->write_length), xorencode(&ulen, 1), 1);
 						r->write_length += 1;
-
 						xorencode(&ulen, 1);
-						memcpy( (r->write_buf + r->write_length), xorencode(username, ulen), ulen);
+
+						char *id_dump = _strdup(account_id);
+						
+						memcpy( (r->write_buf + r->write_length), xorencode(id_dump, ulen), ulen);
 						r->write_length += ulen;
+						xorencode(id_dump, ulen);
+						free(id_dump);
 
 						memcpy(r->write_buf+r->write_length, xorencode(&plen, 1), 1);
 						r->write_length += 1;
-						
 						xorencode(&plen, 1);
-						memcpy(r->write_buf+r->write_length, xorencode(password, plen), plen);
+
+						char *password_dump = _strdup(password);
+						
+						memcpy(r->write_buf+r->write_length, xorencode(password_dump, plen), plen);
 						r->write_length += plen;
+						xorencode(password_dump, plen);
+						free(password_dump);
 
 						/* dst信息 */
 						char *dst = (r->client->read_buf + r->client->read_base + 3);
@@ -590,39 +709,6 @@ int main(int argc, char* argv[])
 				}
 			}
 		}
-
-		//std::list<SOCKET>::iterator temp = client_to_remove.begin();
-		//for(; temp != client_to_remove.end(); temp++)
-		//{
-		//	SOCKET client_fd = *temp;
-
-		//	std::map<SOCKET, client_ctx*>::iterator i = clients.find(client_fd);
-		//	
-		//	if(i != clients.end())
-		//	{
-		//		client_ctx *c = i->second;
-		//		remote_ctx *r = i->second->remote;
-
-		//		clients.erase(i);
-		//	}
-		//}
-
-		//temp = remote_to_remove.begin();
-		//for(; temp != remote_to_remove.end(); temp++)
-		//{
-		//	/* 关闭连接之前看看有没有要发送的数据了。 todo */
-		//	SOCKET remote_fd = *temp;
-
-		//	std::map<SOCKET, remote_ctx*>::iterator i = remotes.find(remote_fd);
-		//	
-		//	if(i != remotes.end())
-		//	{
-		//		client_ctx *c = i->second->client;
-		//		remote_ctx *r = i->second;
-
-		//		remotes.erase(i);
-		//	}
-		//}
 
 		/* remove SOCKET */
 		std::list<SOCKET>::iterator remove_it = client_to_remove.begin();
@@ -725,6 +811,10 @@ int main(int argc, char* argv[])
 
 	} /* end of for loop */
 	
+	free(server);
+	free(server_port);
+	free(local_addr);
+	free(local_port);
 	freeaddrinfo(result2);
 	return 0;
 }
